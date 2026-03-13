@@ -1,37 +1,29 @@
 """
-Classify papers against theses using zero-shot NLI.
+Classify papers against thesis pairs using zero-shot NLI.
 Model: cross-encoder/nli-deberta-v3-large
 
-For each (abstract, thesis) pair the model returns:
-  entailment   → abstract supports the thesis
-  neutral      → abstract does not clearly address the thesis
-  contradiction → abstract opposes the thesis
+For each (abstract, thesis pair) the model picks one of:
+  supports   → abstract argues for the topic
+  opposes    → abstract argues against the topic
+  neutral    → abstract does not clearly take a stance
 
-Output: ArtCon_theses.csv
-  One column per thesis with the label (entailment/neutral/contradiction)
-  + one column per thesis with the entailment score (0–1)
+This ensures mutual exclusivity: a paper cannot support both
+a thesis and its negation.
+
+Output columns per pair:  <key>__stance  (supports/opposes/neutral)
+                           <key>__score   (confidence 0–1)
 """
 import csv
-import re
+import os
 import torch
 from tqdm import tqdm
 from transformers import pipeline
-from theses import THESES
+from theses import THESIS_PAIRS
 
 INPUT   = "ArtCon_keywords.csv"
 OUTPUT  = "ArtCon_theses.csv"
 MODEL   = "cross-encoder/nli-deberta-v3-large"
-BATCH   = 8   # reduce to 4 if OOM
-
-
-def slugify(text: str) -> str:
-    """Turn a thesis into a short column-safe key."""
-    text = text.lower().rstrip(".")
-    text = re.sub(r"[^a-z0-9]+", "_", text)
-    return text[:60]
-
-
-THESIS_KEYS = [slugify(t) for t in THESES]
+BATCH   = 8
 
 
 def load_pipeline():
@@ -46,95 +38,83 @@ def load_pipeline():
     return pipe
 
 
-def classify_batch(pipe, abstracts: list[str], thesis: str) -> list[dict]:
-    """Return list of {label, score} dicts for each abstract."""
+def classify_batch(pipe, abstracts: list[str], pair: dict) -> list[dict]:
+    """
+    Classify a batch of abstracts against a thesis pair.
+    Returns list of {stance, score} dicts.
+    """
+    topic = pair["topic"]
+    pro   = pair["pro"]
+    con   = pair["con"]
+
     results = pipe(
         abstracts,
-        candidate_labels=["entailment", "neutral", "contradiction"],
-        hypothesis_template="{}",
+        candidate_labels=[
+            f"supports the view that {pro}",
+            f"opposes the view that {pro} and argues that {con}",
+            f"does not take a clear stance on {topic}",
+        ],
+        hypothesis_template="This abstract {}",
         multi_label=False,
     )
-    # pipe returns a list when given a list
     if isinstance(results, dict):
         results = [results]
+
     out = []
     for r in results:
-        label_scores = dict(zip(r["labels"], r["scores"]))
-        best_label = r["labels"][0]
-        entailment_score = label_scores.get("entailment", 0.0)
-        out.append({"label": best_label, "score": round(entailment_score, 4)})
+        best = r["labels"][0]
+        score = round(r["scores"][0], 4)
+        if "supports" in best:
+            stance = "supports"
+        elif "opposes" in best:
+            stance = "opposes"
+        else:
+            stance = "neutral"
+        out.append({"stance": stance, "score": score})
     return out
 
 
 def main():
-    import os
     path = INPUT if os.path.exists(INPUT) else "ArtCon.csv"
     print(f"Loading entries from {path}…")
     with open(path, encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
 
-    abstracts = [row.get("abstract", "") or "" for row in rows]
+    abstracts = [
+        (row.get("abstract", "") or "").strip() or "No abstract available."
+        for row in rows
+    ]
 
     pipe = load_pipeline()
 
-    # Results: thesis_key → list of {label, score} per row
-    results = {key: [None] * len(rows) for key in THESIS_KEYS}
+    # results[pair_key] = list of {stance, score} per row
+    results = {pair["key"]: [None] * len(rows) for pair in THESIS_PAIRS}
 
-    for thesis, key in zip(THESES, THESIS_KEYS):
-        print(f"\nThesis: {thesis}")
-        # Substitute thesis into hypothesis template manually
+    for pair in THESIS_PAIRS:
+        print(f"\nPair: {pair['topic']}")
+        key = pair["key"]
         for i in tqdm(range(0, len(abstracts), BATCH), unit="batch"):
             batch = abstracts[i:i + BATCH]
-            # Replace empty abstracts with a placeholder
-            batch_clean = [a if a.strip() else "No abstract available." for a in batch]
-            batch_results = pipe(
-                batch_clean,
-                candidate_labels=[thesis],
-                hypothesis_template="This text supports the view that: {}",
-                multi_label=False,
-            )
-            if isinstance(batch_results, dict):
-                batch_results = [batch_results]
-            for j, r in enumerate(batch_results):
-                score = round(r["scores"][0], 4)
-                # Also get contradiction: run second pass with negation
-                results[key][i + j] = {"score": score}
+            batch_results = classify_batch(pipe, batch, pair)
+            results[key][i:i + len(batch)] = batch_results
 
-        # Second pass: get full entailment/neutral/contradiction
-        print(f"  Getting full labels…")
-        for i in tqdm(range(0, len(abstracts), BATCH), unit="batch"):
-            batch = [a if a.strip() else "No abstract available." for a in abstracts[i:i + BATCH]]
-            batch_results = pipe(
-                batch,
-                candidate_labels=["supports", "is neutral about", "contradicts"],
-                hypothesis_template=f"This abstract {{}} the thesis: {thesis}",
-                multi_label=False,
-            )
-            if isinstance(batch_results, dict):
-                batch_results = [batch_results]
-            for j, r in enumerate(batch_results):
-                label_map = {"supports": "support", "is neutral about": "neutral", "contradicts": "contradiction"}
-                best = r["labels"][0]
-                results[key][i + j]["label"] = label_map[best]
-                results[key][i + j]["label_score"] = round(r["scores"][0], 4)
-
-    # Write output CSV
+    # Write output
     fieldnames = list(rows[0].keys())
-    for key in THESIS_KEYS:
-        fieldnames += [f"{key}__label", f"{key}__score"]
+    for pair in THESIS_PAIRS:
+        fieldnames += [f"{pair['key']}__stance", f"{pair['key']}__score"]
 
     with open(OUTPUT, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for i, row in enumerate(rows):
-            for key in THESIS_KEYS:
-                r = results[key][i] or {}
-                row[f"{key}__label"] = r.get("label", "")
-                row[f"{key}__score"] = r.get("label_score", "")
+            for pair in THESIS_PAIRS:
+                r = results[pair["key"]][i] or {}
+                row[f"{pair['key']}__stance"] = r.get("stance", "")
+                row[f"{pair['key']}__score"]  = r.get("score", "")
             writer.writerow(row)
 
     print(f"\nDone → {OUTPUT}")
-    print(f"Columns added: {len(THESIS_KEYS) * 2} ({len(THESIS_KEYS)} theses × label + score)")
+    print(f"Columns: {len(THESIS_PAIRS)} pairs × (stance + score)")
 
 
 if __name__ == "__main__":
