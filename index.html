@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ARTCON – Document Similarity Graph</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: "Segoe UI", system-ui, sans-serif;
+            background: #0e1117;
+            color: #e0e0e0;
+        }
+
+        header {
+            padding: 2rem 3rem 1.5rem;
+            border-bottom: 1px solid #2a2a3a;
+        }
+
+        header h1 {
+            font-size: 1.8rem;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+            color: #ffffff;
+        }
+
+        header p {
+            margin-top: 0.4rem;
+            font-size: 0.95rem;
+            color: #9090a0;
+            max-width: 700px;
+        }
+
+        .legend {
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+            padding: 0.8rem 3rem;
+            background: #13151f;
+            border-bottom: 1px solid #2a2a3a;
+            font-size: 0.85rem;
+            color: #9090a0;
+            flex-wrap: wrap;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+
+        .legend-gradient {
+            width: 120px;
+            height: 12px;
+            border-radius: 6px;
+            background: linear-gradient(to right, #1e64dc, #c8406e);
+        }
+
+        .graph-container {
+            width: 100%;
+            height: 98vh;
+            min-height: 500px;
+        }
+
+        .graph-container iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>ARTCON – Document Similarity Graph</h1>
+        <p>
+            Each node is a scientific paper. Nodes are positioned by a force-directed layout
+            where edge spring length encodes semantic dissimilarity (SPECTER2 embeddings).
+            Edges connect papers with cosine similarity above threshold.
+        </p>
+    </header>
+
+    <div class="legend">
+        <div class="legend-item">
+            <span>Older</span>
+            <div class="legend-gradient"></div>
+            <span>Recent</span>
+        </div>
+        <div class="legend-item">— Node colour encodes publication year</div>
+        <div class="legend-item">— Edge thickness encodes similarity strength</div>
+        <div class="legend-item">— Hover nodes and edges for details</div>
+        <div class="legend-item">— Scroll to zoom &nbsp;·&nbsp; drag to pan &nbsp;·&nbsp; drag nodes to rearrange</div>
+    </div>
+
+    <div class="graph-container">
+        <iframe src="graph.html" title="Document similarity graph"></iframe>
+    </div>
+
+</body>
+</html>

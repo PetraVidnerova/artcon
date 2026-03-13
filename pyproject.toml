@@ -1,0 +1,21 @@
+[project]
+name = "artcon-database"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.14"
+dependencies = [
+    "adapters>=1.2.0",
+    "gradio>=6.9.0",
+    "networkx>=3.6.1",
+    "numpy>=2.4.3",
+    "plotly>=6.6.0",
+    "python-docx>=1.2.0",
+    "pyvis>=0.3.2",
+    "requests>=2.32.5",
+    "scikit-learn>=1.8.0",
+    "streamlit>=1.55.0",
+    "streamlit-agraph>=0.0.45",
+    "torch>=2.10.0",
+    "tqdm>=4.67.3",
+    "umap-learn>=0.5.11",
+]
