@@ -5,7 +5,9 @@ description = "Add your description here"
 requires-python = ">=3.14"
 dependencies = [
     "adapters>=1.2.0",
+    "bertopic>=0.17.4",
     "gradio>=6.9.0",
+    "hdbscan>=0.8.41",
     "networkx>=3.6.1",
     "numpy>=2.4.3",
     "plotly>=6.6.0",
