@@ -16,6 +16,8 @@ Usage:
     uv run python3 cluster_papers.py --method stance
     uv run python3 cluster_papers.py --method louvain_embeddings
     uv run python3 cluster_papers.py --method louvain_keywords
+    uv run python3 cluster_papers.py --method embeddings_ft
+    uv run python3 cluster_papers.py --method louvain_embeddings_ft
 
 Feature sources:
   louvain     — Louvain community detection on the document similarity graph
@@ -28,8 +30,9 @@ import umap
 import hdbscan
 from collections import Counter
 
-EMBEDDINGS_FILE = "specter2_embeddings.npy"
-INDEX_FILE      = "specter2_index.csv"
+EMBEDDINGS_FILE    = "specter2_embeddings.npy"
+EMBEDDINGS_FT_FILE = "specter2finetuned_embeddings.npy"
+INDEX_FILE         = "specter2_index.csv"
 KEYWORDS_FILE   = "ArtCon_keywords.csv"
 THESES_FILE     = "ArtCon_theses.csv"
 OUTPUT_FILE     = "ArtCon_clusters.csv"
@@ -52,6 +55,13 @@ def load_embeddings():
     mat = np.load(EMBEDDINGS_FILE)
     print(f"  {mat.shape[0]} papers × {mat.shape[1]} dims")
     return mat, 8   # n_neighbors tuned for embedding space
+
+
+def load_embeddings_ft():
+    print("Loading fine-tuned SPECTER2 embeddings…")
+    mat = np.load(EMBEDDINGS_FT_FILE)
+    print(f"  {mat.shape[0]} papers × {mat.shape[1]} dims")
+    return mat, 8
 
 
 def load_keyword_tfidf():
@@ -136,6 +146,26 @@ def run_louvain_embeddings():
     return _louvain_on_graph(G, len(embeddings))
 
 
+def run_louvain_embeddings_ft():
+    """Louvain on cosine-similarity graph (fine-tuned SPECTER2 embeddings)."""
+    import networkx as nx
+    from sklearn.metrics.pairwise import cosine_similarity
+    threshold = 0.94
+    print("Louvain (fine-tuned embeddings): loading embeddings…")
+    embeddings = np.load(EMBEDDINGS_FT_FILE).astype(np.float32)
+    sim_matrix = cosine_similarity(embeddings)
+    print(f"  Building similarity graph (threshold={threshold})…")
+    G = nx.Graph()
+    G.add_nodes_from(range(len(embeddings)))
+    i_idx, j_idx = np.triu_indices(len(embeddings), k=1)
+    sims = sim_matrix[i_idx, j_idx]
+    mask = sims >= threshold
+    for i, j, w in zip(i_idx[mask], j_idx[mask], sims[mask]):
+        G.add_edge(int(i), int(j), weight=float(w))
+    print(f"  {G.number_of_edges()} edges")
+    return _louvain_on_graph(G, len(embeddings))
+
+
 def run_louvain_keywords():
     """Louvain on keyword co-occurrence graph."""
     import networkx as nx
@@ -187,7 +217,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--method",
                         choices=["embeddings", "keywords", "stance",
-                                 "louvain_embeddings", "louvain_keywords", "all"],
+                                 "louvain_embeddings", "louvain_keywords",
+                                 "embeddings_ft", "louvain_embeddings_ft", "all"],
                         default="all")
     args = parser.parse_args()
 
@@ -198,11 +229,13 @@ def main():
     else:
         index = pd.read_csv(INDEX_FILE)
 
-    do_emb      = args.method in ("embeddings",        "all")
-    do_kw       = args.method in ("keywords",          "all")
-    do_stance   = args.method in ("stance",            "all")
-    do_louv_emb = args.method in ("louvain_embeddings","all")
-    do_louv_kw  = args.method in ("louvain_keywords",  "all")
+    do_emb          = args.method in ("embeddings",           "all")
+    do_kw           = args.method in ("keywords",             "all")
+    do_stance       = args.method in ("stance",               "all")
+    do_louv_emb     = args.method in ("louvain_embeddings",   "all")
+    do_louv_kw      = args.method in ("louvain_keywords",     "all")
+    do_emb_ft       = args.method in ("embeddings_ft",        "all")
+    do_louv_emb_ft  = args.method in ("louvain_embeddings_ft","all")
 
     if do_emb:
         mat, nn = load_embeddings()
@@ -231,6 +264,17 @@ def main():
         index["cluster_louvain_keywords"] = run_louvain_keywords()
     elif "cluster_louvain_keywords" not in index.columns:
         index["cluster_louvain_keywords"] = -1
+
+    if do_emb_ft and os.path.exists(EMBEDDINGS_FT_FILE):
+        mat, nn = load_embeddings_ft()
+        index["cluster_embeddings_ft"] = run_clustering(mat, nn, "embeddings_ft")
+    elif "cluster_embeddings_ft" not in index.columns:
+        index["cluster_embeddings_ft"] = -1
+
+    if do_louv_emb_ft and os.path.exists(EMBEDDINGS_FT_FILE):
+        index["cluster_louvain_embeddings_ft"] = run_louvain_embeddings_ft()
+    elif "cluster_louvain_embeddings_ft" not in index.columns:
+        index["cluster_louvain_embeddings_ft"] = -1
 
     index.to_csv(OUTPUT_FILE, index=False)
     print(f"\nWritten {OUTPUT_FILE}")

@@ -9,11 +9,15 @@ Pipeline:
 
 Output:
     ArtCon_clusters.csv  — adds column  cluster_topic  (−1 = noise/no abstract)
+                           or cluster_topic_ft when --ft is used
     topic_labels.json    — {topic_id: "label string"} for display in graph
+    topic_labels_ft.json — same, for fine-tuned embeddings
 
 Usage:
-    uv run python3 topic_model.py
+    uv run python3 topic_model.py           # original embeddings
+    uv run python3 topic_model.py --ft      # fine-tuned embeddings
 """
+import argparse
 import json
 import numpy as np
 import pandas as pd
@@ -22,10 +26,12 @@ from umap import UMAP
 from hdbscan import HDBSCAN
 from sklearn.feature_extraction.text import CountVectorizer
 
-EMBEDDINGS_FILE = "specter2_embeddings.npy"
-THESES_FILE     = "ArtCon_theses.csv"
-CLUSTERS_FILE   = "ArtCon_clusters.csv"
-LABELS_FILE     = "topic_labels.json"
+EMBEDDINGS_FILE    = "specter2_embeddings.npy"
+EMBEDDINGS_FT_FILE = "specter2finetuned_embeddings.npy"
+THESES_FILE        = "ArtCon_theses.csv"
+CLUSTERS_FILE      = "ArtCon_clusters.csv"
+LABELS_FILE        = "topic_labels.json"
+LABELS_FT_FILE     = "topic_labels_ft.json"
 
 # UMAP settings (same as cluster_papers.py for consistency)
 umap_model = UMAP(
@@ -47,8 +53,18 @@ hdbscan_model = HDBSCAN(
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--ft", action="store_true",
+                        help="Use fine-tuned SPECTER2 embeddings")
+    args = parser.parse_args()
+
+    emb_file    = EMBEDDINGS_FT_FILE if args.ft else EMBEDDINGS_FILE
+    cluster_col = "cluster_topic_ft" if args.ft else "cluster_topic"
+    labels_file = LABELS_FT_FILE     if args.ft else LABELS_FILE
+
     print("Loading data…")
-    embeddings = np.load(EMBEDDINGS_FILE)
+    print(f"  Embeddings: {emb_file}")
+    embeddings = np.load(emb_file)
     df = pd.read_csv(THESES_FILE).fillna("")
     docs = [str(r) if str(r).strip() else "" for r in df["abstract"]]
     print(f"  {len(docs)} documents, {sum(1 for d in docs if not d.strip())} without abstract")
@@ -89,9 +105,9 @@ def main():
             words = [w for w, _ in topic_model.get_topic(tid)[:4]]
             labels[str(tid)] = ", ".join(words)
 
-    with open(LABELS_FILE, "w", encoding="utf-8") as f:
+    with open(labels_file, "w", encoding="utf-8") as f:
         json.dump(labels, f, indent=2, ensure_ascii=False)
-    print(f"\nWritten {LABELS_FILE}")
+    print(f"\nWritten {labels_file}")
 
     # Merge into clusters CSV
     if pd.io.common.file_exists(CLUSTERS_FILE):
@@ -99,9 +115,9 @@ def main():
     else:
         clusters_df = pd.read_csv("specter2_index.csv")
 
-    clusters_df["cluster_topic"] = topics
+    clusters_df[cluster_col] = topics
     clusters_df.to_csv(CLUSTERS_FILE, index=False)
-    print(f"Written {CLUSTERS_FILE}  (added cluster_topic column)")
+    print(f"Written {CLUSTERS_FILE}  (added {cluster_col} column)")
 
 
 if __name__ == "__main__":

@@ -19,12 +19,14 @@ from sklearn.metrics.pairwise import cosine_similarity
 from pyvis.network import Network
 from tqdm import tqdm
 
-EMBEDDINGS_FILE = "specter2_embeddings.npy"
-INDEX_FILE      = "specter2_index.csv"
+EMBEDDINGS_FILE    = "specter2_embeddings.npy"
+EMBEDDINGS_FT_FILE = "specter2finetuned_embeddings.npy"
+INDEX_FILE         = "specter2_index.csv"
 THESES_FILE     = "ArtCon_theses.csv"
 KEYWORDS_FILE   = "ArtCon_keywords.csv"
 CLUSTERS_FILE   = "ArtCon_clusters.csv"
-TOPIC_LABELS_FILE = "topic_labels.json"
+TOPIC_LABELS_FILE    = "topic_labels.json"
+TOPIC_LABELS_FT_FILE = "topic_labels_ft.json"
 YEAR_MIN, YEAR_MAX = 1987, 2025
 MIN_SHARED_KW      = 2     # default selected value for keyword edges
 SIM_PRECOMPUTE_MIN = 0.92  # lower bound for pre-computing sim edges
@@ -104,14 +106,21 @@ def load_cluster_data():
     if os.path.exists(TOPIC_LABELS_FILE):
         with open(TOPIC_LABELS_FILE, encoding="utf-8") as f:
             topic_labels = json.load(f)
+    topic_labels_ft = {}
+    if os.path.exists(TOPIC_LABELS_FT_FILE):
+        with open(TOPIC_LABELS_FT_FILE, encoding="utf-8") as f:
+            topic_labels_ft = json.load(f)
 
     result = {}
-    for col, label in [("cluster_embeddings", "Clusters (embeddings)"),
-                        ("cluster_keywords",   "Clusters (keywords)"),
-                        ("cluster_stance",     "Clusters (stance)"),
-                        ("cluster_louvain_embeddings", "Clusters (Louvain, embeddings)"),
-                        ("cluster_louvain_keywords",   "Clusters (Louvain, keywords)"),
-                        ("cluster_topic",      "Topics (BERTopic)")]:
+    for col, label in [("cluster_embeddings",         "Clusters (embeddings)"),
+                        ("cluster_keywords",            "Clusters (keywords)"),
+                        ("cluster_stance",              "Clusters (stance)"),
+                        ("cluster_louvain_embeddings",  "Clusters (Louvain, emb.)"),
+                        ("cluster_louvain_keywords",    "Clusters (Louvain, keywords)"),
+                        ("cluster_topic",               "Topics (BERTopic)"),
+                        ("cluster_embeddings_ft",        "Clusters (emb., fine-tuned)"),
+                        ("cluster_louvain_embeddings_ft","Clusters (Louvain, emb. FT)"),
+                        ("cluster_topic_ft",             "Topics BERTopic (fine-tuned)")]:
         if col not in df.columns:
             continue
         node_clusters = {i: int(c) for i, c in enumerate(df[col])}
@@ -119,7 +128,10 @@ def load_cluster_data():
         palette       = {cid: cluster_to_color(cid) for cid in unique_ids}
         palette[-1]   = cluster_to_color(-1)
         # For topic clustering, use keyword labels in the legend
-        if col == "cluster_topic" and topic_labels:
+        if col == "cluster_topic_ft" and topic_labels_ft:
+            leg_labels = {str(cid): topic_labels_ft.get(str(cid), f"Topic {cid}") for cid in unique_ids}
+            leg_labels["-1"] = topic_labels_ft.get("-1", "Noise")
+        elif col == "cluster_topic" and topic_labels:
             leg_labels = {str(cid): topic_labels.get(str(cid), f"Topic {cid}") for cid in unique_ids}
             leg_labels["-1"] = topic_labels.get("-1", "Noise")
         else:
@@ -184,6 +196,14 @@ def main():
 
     sim_edges            = build_similarity_edges(embeddings, SIM_PRECOMPUTE_MIN)
     kw_edges, max_shared = build_keyword_edges(len(index))
+
+    sim_edges_ft = []
+    if os.path.exists(EMBEDDINGS_FT_FILE):
+        print("Loading fine-tuned embeddings…")
+        embeddings_ft = np.load(EMBEDDINGS_FT_FILE).astype(np.float32)
+        sim_edges_ft = build_similarity_edges(embeddings_ft, SIM_PRECOMPUTE_MIN)
+    else:
+        print("  specter2finetuned_embeddings.npy not found — FT edges disabled.")
 
     print("Building graph…")
     net = Network(
@@ -261,6 +281,18 @@ def main():
         "network = window.visNetwork = new vis.Network(",
     )
 
+    # Build per-node metadata for the side panel
+    node_meta = {
+        i: {
+            "title":   str(row.get("title",   "") or ""),
+            "authors": str(row.get("authors", "") or ""),
+            "year":    str(row.get("year",    "") or ""),
+            "doi":     str(row.get("doi",     "") or ""),
+        }
+        for i, row in index.iterrows()
+    }
+    node_meta_js = json.dumps(node_meta, ensure_ascii=False)
+
     # Build thesis node colours lookup: node_id → {thesis_key → label}
     thesis_colors_js = json.dumps(thesis_node_data, ensure_ascii=False)
     theses_meta_js   = json.dumps(theses_list, ensure_ascii=False)
@@ -282,11 +314,13 @@ def main():
     })
 
     # Compact edge arrays for JS
-    sim_edges_js   = json.dumps(sim_edges)
-    kw_edges_js    = json.dumps(kw_edges)
-    sim_steps_js   = json.dumps(SIM_STEPS)
-    kw_steps_js    = json.dumps(KW_STEPS)
-    max_shared_js  = json.dumps(max_shared)
+    sim_edges_js    = json.dumps(sim_edges)
+    sim_edges_ft_js = json.dumps(sim_edges_ft)
+    kw_edges_js     = json.dumps(kw_edges)
+    sim_steps_js    = json.dumps(SIM_STEPS)
+    kw_steps_js     = json.dumps(KW_STEPS)
+    max_shared_js   = json.dumps(max_shared)
+    has_ft_js       = json.dumps(bool(sim_edges_ft))
 
     injection = f"""
     <style>
@@ -423,11 +457,88 @@ def main():
         margin-right: 5px;
         vertical-align: middle;
       }}
+
+      /* Paper detail panel */
+      #paper-panel {{
+        position: fixed;
+        top: 0; right: -400px;
+        width: 370px; height: 100vh;
+        background: rgba(11,13,20,0.97);
+        border-left: 1px solid #2a2a3a;
+        z-index: 1100;
+        overflow-y: auto;
+        transition: right 0.22s ease;
+        font-family: "Segoe UI", system-ui, sans-serif;
+        backdrop-filter: blur(8px);
+      }}
+      #paper-panel.open {{ right: 0; }}
+      #paper-panel-head {{
+        display: flex; align-items: flex-start; gap: 8px;
+        padding: 14px 14px 10px;
+        border-bottom: 1px solid #1e2030;
+        position: sticky; top: 0;
+        background: rgba(11,13,20,0.98);
+      }}
+      #paper-panel-head h3 {{
+        flex: 1; font-size: 0.88rem; font-weight: 600;
+        color: #d8d8f0; line-height: 1.45; margin: 0;
+      }}
+      #paper-panel-close {{
+        background: none; border: none; color: #5050a0;
+        font-size: 1.1rem; cursor: pointer; padding: 0 2px;
+        line-height: 1; flex-shrink: 0;
+      }}
+      #paper-panel-close:hover {{ color: #c0c0e0; }}
+      #paper-panel-body {{ padding: 12px 14px; }}
+      .pp-meta {{
+        color: #6060a0; font-size: 0.8rem; line-height: 1.7; margin-bottom: 10px;
+      }}
+      .pp-meta a {{ color: #5577cc; text-decoration: none; }}
+      .pp-meta a:hover {{ text-decoration: underline; }}
+      .pp-section-label {{
+        font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em;
+        color: #404080; margin: 12px 0 6px;
+        border-top: 1px solid #1a1c2a; padding-top: 10px;
+      }}
+      #paper-panel-body table {{ width: 100%; border-collapse: collapse; font-size: 0.78rem; }}
+      #paper-panel-body td {{
+        padding: 4px 5px; border-bottom: 1px solid #14162a; vertical-align: middle;
+      }}
+      #paper-panel-body td:first-child {{ color: #5050a0; width: 50%; }}
+      .pp-badge {{
+        display: inline-block; padding: 1px 8px; border-radius: 10px;
+        font-size: 0.72rem; color: #fff;
+      }}
+      #paper-panel-link {{
+        display: block; margin: 16px 0 4px;
+        padding: 7px 14px; border-radius: 6px; text-align: center;
+        background: rgba(70,70,150,0.3); border: 1px solid #35356a;
+        color: #9090d0; text-decoration: none; font-size: 0.82rem;
+      }}
+      #paper-panel-link:hover {{ background: rgba(90,90,180,0.4); color: #d0d0ff; }}
     </style>
 
     <div id="mode-toggle">
       <button class="mode-btn active" id="btn-sim" onclick="switchMode('sim')">Similarity</button>
       <button class="mode-btn"        id="btn-kw"  onclick="switchMode('kw')">Keywords</button>
+      <span id="emb-sep" style="width:1px;background:#2a2a3a;margin:6px 0;display:none"></span>
+      <button class="mode-btn active" id="btn-emb-orig" onclick="switchEmb('orig')" style="display:none">Original</button>
+      <button class="mode-btn"        id="btn-emb-ft"   onclick="switchEmb('ft')"   style="display:none">Fine-tuned</button>
+      <span style="width:1px;background:#2a2a3a;margin:6px 0"></span>
+      <button class="mode-btn" id="btn-physics" onclick="togglePhysics()">⏸ Freeze</button>
+    </div>
+
+    <div id="paper-panel">
+      <div id="paper-panel-head">
+        <h3 id="paper-panel-title"></h3>
+        <button id="paper-panel-close" onclick="hidePaperPanel()">✕</button>
+      </div>
+      <div id="paper-panel-body">
+        <div class="pp-meta" id="paper-panel-meta"></div>
+        <div class="pp-section-label">Cluster assignments</div>
+        <table id="paper-panel-clusters"></table>
+        <a id="paper-panel-link" href="#" target="_blank">Open full paper page →</a>
+      </div>
     </div>
 
     <div id="left-overlay">
@@ -456,6 +567,7 @@ def main():
     </div>
 
     <script>
+      const NODE_META         = {node_meta_js};
       const THESIS_NODE_DATA  = {thesis_colors_js};
       const THESES_META       = {theses_meta_js};
       const ORIG_COLORS       = {orig_colors_js};
@@ -550,13 +662,16 @@ def main():
       // ── Graph mode switch + threshold buttons ──
       // Compact edge data: sim = [from, to, sim_value], kw = [from, to, shared_count]
       const SIM_EDGES    = {sim_edges_js};
+      const SIM_EDGES_FT = {sim_edges_ft_js};
       const KW_EDGES     = {kw_edges_js};
       const SIM_STEPS    = {sim_steps_js};
       const KW_STEPS     = {kw_steps_js};
       const MAX_SHARED   = {max_shared_js};
       const SIM_MIN      = {SIM_PRECOMPUTE_MIN};
+      const HAS_FT       = {has_ft_js};
 
       let currentMode   = "sim";
+      let currentEmbType = "orig";   // "orig" | "ft"
       let currentSimThr = {args.threshold};
       let currentKwThr  = {MIN_SHARED_KW};
 
@@ -591,7 +706,8 @@ def main():
         if (!window.visEdges || !window.visNetwork) return;
         let edges;
         if (currentMode === "sim") {{
-          edges = SIM_EDGES.filter(e => e[2] >= currentSimThr).map(makeSimEdge);
+          const pool = (currentEmbType === "ft" && HAS_FT) ? SIM_EDGES_FT : SIM_EDGES;
+          edges = pool.filter(e => e[2] >= currentSimThr).map(makeSimEdge);
         }} else {{
           edges = KW_EDGES.filter(e => e[2] >= currentKwThr).map(makeKwEdge);
         }}
@@ -622,15 +738,35 @@ def main():
         edgeCountEl.textContent = "";
       }}
 
+      function switchEmb(type) {{
+        if (type === currentEmbType) return;
+        currentEmbType = type;
+        document.getElementById("btn-emb-orig").classList.toggle("active", type === "orig");
+        document.getElementById("btn-emb-ft").classList.toggle("active", type === "ft");
+        applyEdges();
+        window.visNetwork.fit({{ animation: {{ duration: 600, easingFunction: "easeInOutQuad" }} }});
+      }}
+
+      function updateEmbToggleVisibility() {{
+        const show = currentMode === "sim" && HAS_FT;
+        ["btn-emb-orig","btn-emb-ft","emb-sep"].forEach(id => {{
+          document.getElementById(id).style.display = show ? "" : "none";
+        }});
+      }}
+
       function switchMode(mode) {{
         if (mode === currentMode) return;
         currentMode = mode;
         document.getElementById("btn-sim").classList.toggle("active", mode === "sim");
         document.getElementById("btn-kw").classList.toggle("active", mode === "kw");
+        updateEmbToggleVisibility();
         buildThrButtons();
         applyEdges();
         window.visNetwork.fit({{ animation: {{ duration: 600, easingFunction: "easeInOutQuad" }} }});
       }}
+
+      // Show emb toggle on load if FT embeddings present
+      updateEmbToggleVisibility();
 
       buildThrButtons();
 
@@ -642,6 +778,67 @@ def main():
         if (key) updateThesisLegend(key);
         applyColors();
       }});
+
+      // ── Paper detail panel ──
+      function showPaperPanel(nodeId) {{
+        const meta = NODE_META[String(nodeId)];
+        if (!meta) return;
+
+        document.getElementById("paper-panel-title").textContent = meta.title || ("Paper " + nodeId);
+
+        const doi = meta.doi;
+        document.getElementById("paper-panel-meta").innerHTML =
+          (meta.authors ? `<div>${{meta.authors}}</div>` : "") +
+          (meta.year    ? `<div>Year: ${{meta.year}}</div>` : "") +
+          (doi          ? `<div>DOI: <a href="https://doi.org/${{doi}}" target="_blank">${{doi}}</a></div>` : "");
+
+        let rows = "";
+        Object.entries(CLUSTER_DATA).forEach(([key, data]) => {{
+          const cid   = data.nodes[String(nodeId)] ?? -1;
+          const color = data.palette[String(cid)] || "#333345";
+          let label;
+          if (cid < 0) {{
+            label = "Noise";
+          }} else {{
+            const raw = data.leg_labels[String(cid)];
+            label = raw || ("Cluster " + cid);
+          }}
+          rows += `<tr>
+            <td>${{data.label}}</td>
+            <td><span class="pp-badge" style="background:${{color}}">${{label}}</span></td>
+          </tr>`;
+        }});
+        document.getElementById("paper-panel-clusters").innerHTML = rows;
+
+        document.getElementById("paper-panel-link").href = `papers/${{nodeId}}.html`;
+        document.getElementById("paper-panel").classList.add("open");
+      }}
+
+      function hidePaperPanel() {{
+        document.getElementById("paper-panel").classList.remove("open");
+      }}
+
+      // ── Physics stop/resume toggle ──
+      let physicsEnabled = true;
+      function togglePhysics() {{
+        physicsEnabled = !physicsEnabled;
+        if (!window.visNetwork) return;
+        window.visNetwork.setOptions({{ physics: {{ enabled: physicsEnabled }} }});
+        const btn = document.getElementById("btn-physics");
+        btn.textContent  = physicsEnabled ? "⏸ Freeze" : "▶ Resume";
+        btn.classList.toggle("active", !physicsEnabled);
+      }}
+
+      // Attach click handler once the network is ready
+      (function waitForNetwork() {{
+        if (window.visNetwork) {{
+          window.visNetwork.on("click", function(params) {{
+            if (params.nodes.length > 0) showPaperPanel(params.nodes[0]);
+          }});
+        }} else {{
+          setTimeout(waitForNetwork, 100);
+        }}
+      }})();
     </script>
     """
 
