@@ -3,13 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ARTCON – Document Similarity Graph</title>
+    <title>ARTCON – Artificial Consciousness Literature</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
             font-family: "Segoe UI", system-ui, sans-serif;
@@ -18,52 +14,80 @@
         }
 
         header {
-            padding: 2rem 3rem 1.5rem;
+            padding: 1.8rem 3rem 1.4rem;
             border-bottom: 1px solid #2a2a3a;
         }
 
         header h1 {
-            font-size: 1.8rem;
+            font-size: 1.6rem;
             font-weight: 600;
             letter-spacing: 0.02em;
             color: #ffffff;
         }
 
         header p {
-            margin-top: 0.4rem;
-            font-size: 0.95rem;
-            color: #9090a0;
-            max-width: 700px;
+            margin-top: 0.5rem;
+            font-size: 0.9rem;
+            color: #8080a0;
+            max-width: 820px;
+            line-height: 1.6;
         }
 
-        .legend {
+        /* ── Feature strip ── */
+        .features {
             display: flex;
-            align-items: center;
-            gap: 1.5rem;
-            padding: 0.8rem 3rem;
-            background: #13151f;
-            border-bottom: 1px solid #2a2a3a;
-            font-size: 0.85rem;
-            color: #9090a0;
             flex-wrap: wrap;
+            gap: 0;
+            background: #11131d;
+            border-bottom: 1px solid #2a2a3a;
+            font-size: 0.8rem;
+            color: #7070a0;
         }
 
-        .legend-item {
+        .feature {
+            padding: 8px 20px;
+            border-right: 1px solid #1e2030;
             display: flex;
             align-items: center;
-            gap: 0.4rem;
+            gap: 7px;
         }
 
-        .legend-gradient {
-            width: 120px;
-            height: 12px;
-            border-radius: 6px;
-            background: linear-gradient(to right, #1e64dc, #c8406e);
+        .feature:last-child { border-right: none; }
+
+        .feature .icon {
+            font-size: 0.95rem;
+            opacity: 0.75;
         }
 
+        /* ── Section headers ── */
+        .section-header {
+            padding: 10px 3rem;
+            background: #0e1117;
+            border-bottom: 1px solid #1e2030;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.09em;
+            color: #404070;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .section-header .count {
+            background: #1a1c2a;
+            border: 1px solid #2a2a3a;
+            border-radius: 10px;
+            padding: 1px 9px;
+            font-size: 0.72rem;
+            color: #5050a0;
+            letter-spacing: 0;
+            text-transform: none;
+        }
+
+        /* ── Graph iframe ── */
         .graph-container {
             width: 100%;
-            height: 98vh;
+            height: 92vh;
             min-height: 500px;
         }
 
@@ -74,6 +98,7 @@
             display: block;
         }
 
+        /* ── Timeline iframe ── */
         .timeline-container {
             width: 100%;
             border-top: 1px solid #2a2a3a;
@@ -85,33 +110,88 @@
             border: none;
             display: block;
         }
+
+        /* ── Clustering methods legend ── */
+        .methods-bar {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 3rem;
+            background: #0c0e18;
+            border-bottom: 1px solid #1e2030;
+            font-size: 0.78rem;
+            color: #6060a0;
+        }
+
+        .methods-bar .label {
+            color: #404070;
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+            margin-right: 4px;
+        }
+
+        .method-tag {
+            padding: 2px 10px;
+            border-radius: 10px;
+            background: #161828;
+            border: 1px solid #2a2a3a;
+            color: #7878a8;
+            font-size: 0.75rem;
+        }
+
+        .method-tag.ft {
+            border-color: #3a3a6a;
+            color: #8888c0;
+        }
     </style>
 </head>
 <body>
 
     <header>
-        <h1>ARTCON – Document Similarity Graph</h1>
+        <h1>ARTCON – Artificial Consciousness Literature</h1>
         <p>
-            Each node is a scientific paper. Nodes are positioned by a force-directed layout
-            where edge spring length encodes semantic dissimilarity (SPECTER2 embeddings).
-            Edges connect papers with cosine similarity above threshold.
+            Interactive exploration of ~696 academic papers on artificial consciousness.
+            Papers are represented as nodes in a semantic similarity graph using
+            SPECTER2 embeddings (original and bibliographic-coupling fine-tuned).
+            Switch between similarity and keyword edges, apply clustering, highlight
+            thesis stances, and open individual paper pages for full details.
         </p>
     </header>
 
-    <div class="legend">
-        <div class="legend-item">
-            <span>Older</span>
-            <div class="legend-gradient"></div>
-            <span>Recent</span>
-        </div>
-        <div class="legend-item">— Node colour encodes publication year</div>
-        <div class="legend-item">— Edge thickness encodes similarity strength</div>
-        <div class="legend-item">— Hover nodes and edges for details</div>
-        <div class="legend-item">— Scroll to zoom &nbsp;·&nbsp; drag to pan &nbsp;·&nbsp; drag nodes to rearrange</div>
+    <div class="features">
+        <div class="feature"><span class="icon">⬡</span> 696 papers · 1987–2025</div>
+        <div class="feature"><span class="icon">⇌</span> Similarity edges (cosine, SPECTER2) · Keyword co-occurrence edges</div>
+        <div class="feature"><span class="icon">◑</span> Original &amp; fine-tuned embeddings</div>
+        <div class="feature"><span class="icon">◐</span> 5 thesis stance dimensions</div>
+        <div class="feature"><span class="icon">↗</span> Click node → paper detail panel</div>
+        <div class="feature"><span class="icon">⏸</span> Freeze / resume layout</div>
+    </div>
+
+    <div class="methods-bar">
+        <span class="label">Clustering methods</span>
+        <span class="method-tag">HDBSCAN / embeddings</span>
+        <span class="method-tag">HDBSCAN / keywords</span>
+        <span class="method-tag">HDBSCAN / stance</span>
+        <span class="method-tag">Louvain / embeddings</span>
+        <span class="method-tag">Louvain / keywords</span>
+        <span class="method-tag">BERTopic</span>
+        <span class="method-tag ft">HDBSCAN / emb. fine-tuned</span>
+        <span class="method-tag ft">Louvain / emb. fine-tuned</span>
+        <span class="method-tag ft">BERTopic fine-tuned</span>
+    </div>
+
+    <div class="section-header">
+        Semantic graph <span class="count">graph.html</span>
     </div>
 
     <div class="graph-container">
         <iframe src="graph.html" title="Document similarity graph"></iframe>
+    </div>
+
+    <div class="section-header">
+        Thesis timeline <span class="count">timeline.html</span>
     </div>
 
     <div class="timeline-container">

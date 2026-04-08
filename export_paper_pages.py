@@ -181,7 +181,7 @@ def build_page(i: int, row, thesis_row, n_total: int, cluster_labels: dict) -> s
     <span class="counter">Paper {i + 1} of {n_total}</span>
     {next_link}
     <span class="spacer"></span>
-    <a href="../graph.html">← Back to graph</a>
+    <a href="../index.html">← Back to graph</a>
   </nav>
   <main>
     <h1>{escaped_title}</h1>
