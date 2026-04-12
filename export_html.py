@@ -231,7 +231,7 @@ def main():
           "centralGravity": 0.01,
           "damping": 0.9
         },
-        "stabilization": { "iterations": 500 }
+        "stabilization": { "iterations": 500, "fit": true }
       }
     }
     """)
@@ -713,9 +713,14 @@ def main():
         }}
         window.visEdges.clear();
         window.visEdges.add(edges);
-        const bar = document.getElementById("loadingBar");
-        if (bar) bar.style.display = "none";
         edgeCountEl.textContent = edges.length + " edges";
+        // Run background stabilization then auto-freeze when done
+        physicsEnabled = true;
+        window.visNetwork.setOptions({{ physics: {{ enabled: true }} }});
+        window.visNetwork.stabilize(500);
+        const btn = document.getElementById("btn-physics");
+        btn.textContent = "⏸ Freeze";
+        btn.classList.remove("active");
       }}
 
       function buildThrButtons() {{
@@ -744,7 +749,6 @@ def main():
         document.getElementById("btn-emb-orig").classList.toggle("active", type === "orig");
         document.getElementById("btn-emb-ft").classList.toggle("active", type === "ft");
         applyEdges();
-        window.visNetwork.fit({{ animation: {{ duration: 600, easingFunction: "easeInOutQuad" }} }});
       }}
 
       function updateEmbToggleVisibility() {{
@@ -762,7 +766,6 @@ def main():
         updateEmbToggleVisibility();
         buildThrButtons();
         applyEdges();
-        window.visNetwork.fit({{ animation: {{ duration: 600, easingFunction: "easeInOutQuad" }} }});
       }}
 
       // Show emb toggle on load if FT embeddings present
@@ -829,11 +832,21 @@ def main():
         btn.classList.toggle("active", !physicsEnabled);
       }}
 
-      // Attach click handler once the network is ready
+      // Attach handlers once the network is ready
       (function waitForNetwork() {{
         if (window.visNetwork) {{
           window.visNetwork.on("click", function(params) {{
             if (params.nodes.length > 0) showPaperPanel(params.nodes[0]);
+          }});
+          // Auto-freeze after every stabilization (initial load + edge changes)
+          window.visNetwork.on("stabilizationIterationsDone", function() {{
+            physicsEnabled = false;
+            window.visNetwork.setOptions({{ physics: {{ enabled: false }} }});
+            const bar = document.getElementById("loadingBar");
+            if (bar) bar.style.display = "none";
+            const btn = document.getElementById("btn-physics");
+            btn.textContent = "▶ Resume";
+            btn.classList.add("active");
           }});
         }} else {{
           setTimeout(waitForNetwork, 100);
