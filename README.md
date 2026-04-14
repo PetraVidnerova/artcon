@@ -2,9 +2,9 @@
 
 Interactive analysis and visualisation of ~696 papers on **artificial consciousness**.
 
-The pipeline converts a `.docx` bibliography into a browsable graph where nodes are papers,
-edges encode similarity or keyword overlap, and nodes can be coloured by publication year,
-cluster membership, topic, or philosophical stance.
+The pipeline converts a bibliography (from a `.docx` file or a Zotero CSV export) into a
+browsable graph where nodes are papers, edges encode similarity or keyword overlap, and nodes
+can be coloured by publication year, cluster membership, topic, or philosophical stance.
 
 ---
 
@@ -23,10 +23,14 @@ xdg-open index.html
 ## Pipeline overview
 
 ```
-ArtCon_with abstracts.docx
-        │
-        ▼
-  convert_to_csv.py ──────────────────────────► ArtCon.csv
+ArtCon_with abstracts.docx          ArtCon_from_zotero.csv
+        │                                      │
+        ▼                                      ▼
+  convert_to_csv.py              csv2csv.py
+        │                                      │
+        └──────────────────┬────────────────────┘
+                           ▼
+                       ArtCon.csv
         │
         ▼
   find_openalex_ids.py ───────────────────────► ArtCon_openalex.csv
@@ -61,13 +65,26 @@ index_keywords.html embeds keyword_graph.html
 
 ## Scripts
 
-### 1. `convert_to_csv.py` — Parse bibliography
+### 1a. `convert_to_csv.py` — Parse bibliography from DOCX
 
 Parses `ArtCon_with abstracts.docx` (APA format with italic title/journal distinction)
 into a structured CSV.
 
 ```bash
 uv run python3 convert_to_csv.py
+```
+
+**Output:** `ArtCon.csv`
+**Columns:** `authors, year, title, journal, volume, issue, pages, doi, url, abstract`
+
+---
+
+### 1b. `csv2csv.py` — Convert Zotero CSV export
+
+Converts `ArtCon_from_zotero.csv` (Zotero CSV export) to the same canonical format.
+
+```bash
+uv run python3 csv2csv.py
 ```
 
 **Output:** `ArtCon.csv`
@@ -306,7 +323,8 @@ uv run python3 export_gephi.py
 
 | File | Description |
 |------|-------------|
-| `ArtCon_with abstracts.docx` | Original bibliography (source, not generated) |
+| `ArtCon_with abstracts.docx` | Original bibliography in DOCX format (source, not generated) |
+| `ArtCon_from_zotero.csv` | Zotero CSV export (alternative source, not generated) |
 | `ArtCon.csv` | Parsed bibliography |
 | `ArtCon_openalex.csv` | + OpenAlex IDs |
 | `ArtCon_keywords.csv` | + extracted keyphrases |
