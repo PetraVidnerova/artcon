@@ -8,6 +8,7 @@ dependencies = [
     "bertopic>=0.17.4",
     "gradio>=6.9.0",
     "hdbscan>=0.8.41",
+    "matplotlib>=3.10.8",
     "networkx>=3.6.1",
     "numpy>=2.4.3",
     "plotly>=6.6.0",
