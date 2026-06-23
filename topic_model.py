@@ -16,6 +16,7 @@ Output:
 Usage:
     uv run python3 topic_model.py           # original embeddings
     uv run python3 topic_model.py --ft      # fine-tuned embeddings
+    uv run python3 topic_model.py --tfidf   # TF-IDF (lexical) embeddings
 """
 import argparse
 import json
@@ -28,10 +29,12 @@ from sklearn.feature_extraction.text import CountVectorizer
 
 EMBEDDINGS_FILE    = "specter2_embeddings.npy"
 EMBEDDINGS_FT_FILE = "specter2finetuned_embeddings.npy"
+TFIDF_FILE         = "tfidf_embeddings.npy"
 THESES_FILE        = "ArtCon_theses.csv"
 CLUSTERS_FILE      = "ArtCon_clusters.csv"
 LABELS_FILE        = "topic_labels.json"
 LABELS_FT_FILE     = "topic_labels_ft.json"
+LABELS_TFIDF_FILE  = "topic_labels_tfidf.json"
 
 # UMAP settings (same as cluster_papers.py for consistency)
 umap_model = UMAP(
@@ -54,13 +57,19 @@ hdbscan_model = HDBSCAN(
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ft", action="store_true",
-                        help="Use fine-tuned SPECTER2 embeddings")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--ft", action="store_true",
+                       help="Use fine-tuned SPECTER2 embeddings")
+    group.add_argument("--tfidf", action="store_true",
+                       help="Use TF-IDF embeddings (lexical) to drive the clustering")
     args = parser.parse_args()
 
-    emb_file    = EMBEDDINGS_FT_FILE if args.ft else EMBEDDINGS_FILE
-    cluster_col = "cluster_topic_ft" if args.ft else "cluster_topic"
-    labels_file = LABELS_FT_FILE     if args.ft else LABELS_FILE
+    if args.tfidf:
+        emb_file, cluster_col, labels_file = TFIDF_FILE, "cluster_topic_tfidf", LABELS_TFIDF_FILE
+    elif args.ft:
+        emb_file, cluster_col, labels_file = EMBEDDINGS_FT_FILE, "cluster_topic_ft", LABELS_FT_FILE
+    else:
+        emb_file, cluster_col, labels_file = EMBEDDINGS_FILE, "cluster_topic", LABELS_FILE
 
     print("Loading data…")
     print(f"  Embeddings: {emb_file}")

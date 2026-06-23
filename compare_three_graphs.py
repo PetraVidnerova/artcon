@@ -1,12 +1,14 @@
 """
-Summary comparison table for three paper graphs:
+Summary comparison table for the paper graphs:
 
     1. Bibliographic-coupling graph   (shared-reference counts from OpenAlex)
-    2. SPECTER2 embedding graph       (cosine similarity, original embeddings)
-    3. Fine-tuned embedding graph     (cosine similarity, LoRA-tuned embeddings)
+    2. TF-IDF lexical graph           (cosine similarity, bag-of-words TF-IDF)
+    3. SPECTER2 embedding graph       (cosine similarity, original embeddings)
+    4. Fine-tuned embedding graph     (cosine similarity, LoRA-tuned embeddings)
 
 Mirrors the original two-column (Original vs. Fine-tuned) summary table, adding
-the coupling graph as a third column.
+the coupling and TF-IDF graphs as further columns. (Filename kept for history;
+it now compares four graphs.)
 
 Row semantics
 -------------
@@ -39,6 +41,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 EMBEDDINGS_FILE    = "specter2_embeddings.npy"
 EMBEDDINGS_FT_FILE = "specter2finetuned_embeddings.npy"
+TFIDF_FILE         = "tfidf_embeddings.npy"
 COUPLING_FILE      = "ArtCon_coupling.npz"
 
 NA = "--"
@@ -184,7 +187,8 @@ ROWS = [
     ("sil_thr",      "Silhouette (thresholded)",                "f4"),
     ("db_thr",       "Davies--Bouldin (thresholded)",           "f4"),
 ]
-COLS = [("coupling", "Coupling"), ("emb", "Embeddings"), ("ft", "Fine-tuned")]
+COLS = [("coupling", "Coupling"), ("tfidf", "TF-IDF"),
+        ("emb", "Embeddings"), ("ft", "Fine-tuned")]
 
 
 def fmt(value, kind):
@@ -195,14 +199,16 @@ def fmt(value, kind):
     return f"{value:.4f}" if kind == "f4" else f"{int(value)}"
 
 
-def render_text(data, sim_threshold, coupling_min):
-    head = f"{'Metric':42s} {'Coupling':>10s} {'Embeddings':>11s} {'Fine-tuned':>11s}"
+def render_text(data, sim_threshold, coupling_min, tfidf_threshold):
+    W = 12
+    head = f"{'Metric':42s}" + "".join(f"{lbl:>{W}s}" for _, lbl in COLS)
     lines = [head, "-" * len(head)]
     for key, label, kind in ROWS:
-        cells = [fmt(data[c][key], kind) for c, _ in COLS]
-        lines.append(f"{label.replace('--','–'):42s} {cells[0]:>10s} {cells[1]:>11s} {cells[2]:>11s}")
+        cells = "".join(f"{fmt(data[c][key], kind):>{W}s}" for c, _ in COLS)
+        lines.append(f"{label.replace('--','–'):42s}{cells}")
     lines += ["",
               f"Thresholds: embeddings/fine-tuned at cosine similarity >= {sim_threshold}; "
+              f"TF-IDF at cosine similarity >= {tfidf_threshold}; "
               f"coupling at >= {coupling_min} shared references.",
               "'--' = not applicable (coupling graph has no cosine-similarity space).",
               "Note: coupling covers 696 papers vs. 704 embeddings; coupling node i is aligned",
@@ -211,13 +217,17 @@ def render_text(data, sim_threshold, coupling_min):
     return "\n".join(lines)
 
 
-def render_latex(data, sim_threshold, coupling_min):
+def render_latex(data, sim_threshold, coupling_min, tfidf_threshold):
+    colspec = "l" + "r" * len(COLS)
+    header = "Metric & " + " & ".join(lbl for _, lbl in COLS) + r" \\"
     out = [
         r"\begin{table}[htbp]",
         r"\centering",
         r"\caption{Structural and clustering-quality comparison of the bibliographic-coupling "
-        r"graph, the SPECTER2 embedding graph, and the fine-tuned embedding graph. "
+        r"graph, the lexical TF-IDF graph, the SPECTER2 embedding graph, and the fine-tuned "
+        r"embedding graph. "
         rf"Embedding graphs are thresholded at cosine similarity $\geq {sim_threshold}$; "
+        rf"the TF-IDF graph at cosine similarity $\geq {tfidf_threshold}$; "
         rf"the coupling graph at $\geq {coupling_min}$ shared references. "
         r"`Complete graph' rows require a cosine vector space and are not applicable to the "
         r"coupling graph. Silhouette and Davies--Bouldin score each graph's Louvain communities "
@@ -225,16 +235,17 @@ def render_latex(data, sim_threshold, coupling_min):
         r"Note: the coupling matrix covers 696 papers while the embeddings cover 704; "
         r"coupling node $i$ is aligned with embedding row $i$ (as in the interactive viewer), "
         r"so the 8 papers without coupling data appear as isolated nodes in the coupling column.}",
-        r"\label{tab:three-graph-comparison}",
-        r"\begin{tabular}{lrrr}",
+        r"\label{tab:graph-comparison}",
+        rf"\begin{{tabular}}{{{colspec}}}",
         r"\hline",
-        r"Metric & Coupling & Embeddings & Fine-tuned \\",
+        header,
         r"\hline",
     ]
     for key, label, kind in ROWS:
         cells = [fmt(data[c][key], kind) for c, _ in COLS]
         cells = [c if c != NA else r"\textemdash" for c in cells]
-        out.append(f"{label:42s} & {cells[0]:>12s} & {cells[1]:>12s} & {cells[2]:>12s} \\\\")
+        body = " & ".join(f"{c:>12s}" for c in cells)
+        out.append(f"{label:42s} & {body} \\\\")
     out += [r"\hline", r"\end{tabular}", r"\end{table}"]
     return "\n".join(out)
 
@@ -276,6 +287,9 @@ def render_png(data, out_path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--sim-threshold", type=float, default=0.94)
+    ap.add_argument("--tfidf-threshold", type=float, default=0.10,
+                    help="Cosine threshold for the TF-IDF graph (default 0.10; "
+                         "TF-IDF cosines are much smaller than SPECTER2's)")
     ap.add_argument("--coupling-min", type=int, default=2)
     ap.add_argument("--resolution", type=float, default=1.0)
     ap.add_argument("--seed", type=int, default=42)
@@ -287,25 +301,27 @@ def main():
     print("Loading embeddings & coupling matrix…")
     emb_o = np.load(EMBEDDINGS_FILE).astype(np.float32)
     emb_f = np.load(EMBEDDINGS_FT_FILE).astype(np.float32)
+    emb_t = np.load(TFIDF_FILE).astype(np.float32)
     mat   = sp.load_npz(COUPLING_FILE)
     print(f"  embeddings: {emb_o.shape}, fine-tuned: {emb_f.shape}, "
-          f"coupling: {mat.shape} ({mat.nnz} nnz)")
+          f"tf-idf: {emb_t.shape}, coupling: {mat.shape} ({mat.nnz} nnz)")
 
     print("Computing columns…")
     data = {
         "emb":      column_for_sim("embeddings", emb_o, args.sim_threshold, args.resolution, args.seed),
         "ft":       column_for_sim("fine-tuned", emb_f, args.sim_threshold, args.resolution, args.seed),
+        "tfidf":    column_for_sim("tf-idf", emb_t, args.tfidf_threshold, args.resolution, args.seed),
         "coupling": column_for_coupling(mat, args.coupling_min, emb_o, args.resolution, args.seed),
     }
 
-    text = render_text(data, args.sim_threshold, args.coupling_min)
+    text = render_text(data, args.sim_threshold, args.coupling_min, args.tfidf_threshold)
     print("\n" + text + "\n")
 
     with open(args.txt, "w") as f:
         f.write(text + "\n")
     print(f"Wrote {args.txt}")
     with open(args.tex, "w") as f:
-        f.write(render_latex(data, args.sim_threshold, args.coupling_min) + "\n")
+        f.write(render_latex(data, args.sim_threshold, args.coupling_min, args.tfidf_threshold) + "\n")
     print(f"Wrote {args.tex}")
     render_png(data, args.png)
 

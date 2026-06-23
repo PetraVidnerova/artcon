@@ -18,6 +18,8 @@ Usage:
     uv run python3 cluster_papers.py --method louvain_keywords
     uv run python3 cluster_papers.py --method embeddings_ft
     uv run python3 cluster_papers.py --method louvain_embeddings_ft
+    uv run python3 cluster_papers.py --method tfidf
+    uv run python3 cluster_papers.py --method louvain_tfidf
 
 Feature sources:
   louvain     — Louvain community detection on the document similarity graph
@@ -32,7 +34,12 @@ from collections import Counter
 
 EMBEDDINGS_FILE    = "specter2_embeddings.npy"
 EMBEDDINGS_FT_FILE = "specter2finetuned_embeddings.npy"
+TFIDF_FILE         = "tfidf_embeddings.npy"
 INDEX_FILE         = "specter2_index.csv"
+
+# TF-IDF cosine similarities are far smaller than SPECTER2's (~0.02 median vs
+# ~0.91), so the lexical similarity graph needs its own, much lower threshold.
+TFIDF_THRESHOLD = 0.10
 KEYWORDS_FILE   = "ArtCon_keywords.csv"
 THESES_FILE     = "ArtCon_theses.csv"
 OUTPUT_FILE     = "ArtCon_clusters.csv"
@@ -62,6 +69,13 @@ def load_embeddings_ft():
     mat = np.load(EMBEDDINGS_FT_FILE)
     print(f"  {mat.shape[0]} papers × {mat.shape[1]} dims")
     return mat, 8
+
+
+def load_tfidf_embeddings():
+    print("Loading TF-IDF embeddings…")
+    mat = np.load(TFIDF_FILE)
+    print(f"  {mat.shape[0]} papers × {mat.shape[1]} dims")
+    return mat, 15   # n_neighbors tuned for the high-dim lexical space
 
 
 def load_keyword_tfidf():
@@ -166,6 +180,26 @@ def run_louvain_embeddings_ft():
     return _louvain_on_graph(G, len(embeddings))
 
 
+def run_louvain_tfidf():
+    """Louvain on cosine-similarity graph (TF-IDF embeddings)."""
+    import networkx as nx
+    from sklearn.metrics.pairwise import cosine_similarity
+    threshold = TFIDF_THRESHOLD
+    print("Louvain (TF-IDF): loading embeddings…")
+    embeddings = np.load(TFIDF_FILE).astype(np.float32)
+    sim_matrix = cosine_similarity(embeddings)
+    print(f"  Building similarity graph (threshold={threshold})…")
+    G = nx.Graph()
+    G.add_nodes_from(range(len(embeddings)))
+    i_idx, j_idx = np.triu_indices(len(embeddings), k=1)
+    sims = sim_matrix[i_idx, j_idx]
+    mask = sims >= threshold
+    for i, j, w in zip(i_idx[mask], j_idx[mask], sims[mask]):
+        G.add_edge(int(i), int(j), weight=float(w))
+    print(f"  {G.number_of_edges()} edges")
+    return _louvain_on_graph(G, len(embeddings))
+
+
 def run_louvain_keywords():
     """Louvain on keyword co-occurrence graph."""
     import networkx as nx
@@ -218,7 +252,8 @@ def main():
     parser.add_argument("--method",
                         choices=["embeddings", "keywords", "stance",
                                  "louvain_embeddings", "louvain_keywords",
-                                 "embeddings_ft", "louvain_embeddings_ft", "all"],
+                                 "embeddings_ft", "louvain_embeddings_ft",
+                                 "tfidf", "louvain_tfidf", "all"],
                         default="all")
     args = parser.parse_args()
 
@@ -236,6 +271,8 @@ def main():
     do_louv_kw      = args.method in ("louvain_keywords",     "all")
     do_emb_ft       = args.method in ("embeddings_ft",        "all")
     do_louv_emb_ft  = args.method in ("louvain_embeddings_ft","all")
+    do_tfidf        = args.method in ("tfidf",                "all")
+    do_louv_tfidf   = args.method in ("louvain_tfidf",        "all")
 
     if do_emb:
         mat, nn = load_embeddings()
@@ -275,6 +312,17 @@ def main():
         index["cluster_louvain_embeddings_ft"] = run_louvain_embeddings_ft()
     elif "cluster_louvain_embeddings_ft" not in index.columns:
         index["cluster_louvain_embeddings_ft"] = -1
+
+    if do_tfidf and os.path.exists(TFIDF_FILE):
+        mat, nn = load_tfidf_embeddings()
+        index["cluster_tfidf"] = run_clustering(mat, nn, "tfidf")
+    elif "cluster_tfidf" not in index.columns:
+        index["cluster_tfidf"] = -1
+
+    if do_louv_tfidf and os.path.exists(TFIDF_FILE):
+        index["cluster_louvain_tfidf"] = run_louvain_tfidf()
+    elif "cluster_louvain_tfidf" not in index.columns:
+        index["cluster_louvain_tfidf"] = -1
 
     index.to_csv(OUTPUT_FILE, index=False)
     print(f"\nWritten {OUTPUT_FILE}")

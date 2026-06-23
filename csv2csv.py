@@ -4,8 +4,8 @@ Maps Zotero export columns to the project's canonical field names.
 """
 import csv
 
-ZOTERO_IN = '/home/petra/work_trust/ARTCON_DATABASE/ArtCon_from_zotero.csv'
-CSV_OUT   = '/home/petra/work_trust/ARTCON_DATABASE/ArtCon.csv'
+ZOTERO_IN = 'ArtCon_from_zotero.csv'
+CSV_OUT   = 'ArtCon.csv'
 
 FIELDS = ['authors', 'year', 'title', 'journal', 'volume', 'issue', 'pages', 'doi', 'url', 'abstract']
 

@@ -21,20 +21,26 @@ from tqdm import tqdm
 
 EMBEDDINGS_FILE    = "specter2_embeddings.npy"
 EMBEDDINGS_FT_FILE = "specter2finetuned_embeddings.npy"
+TFIDF_FILE         = "tfidf_embeddings.npy"
 INDEX_FILE         = "specter2_index.csv"
 THESES_FILE     = "ArtCon_theses.csv"
 KEYWORDS_FILE   = "ArtCon_keywords.csv"
 CLUSTERS_FILE   = "ArtCon_clusters.csv"
 COUPLING_FILE   = "ArtCon_coupling.npz"
-TOPIC_LABELS_FILE    = "topic_labels.json"
-TOPIC_LABELS_FT_FILE = "topic_labels_ft.json"
+TOPIC_LABELS_FILE       = "topic_labels.json"
+TOPIC_LABELS_FT_FILE    = "topic_labels_ft.json"
+TOPIC_LABELS_TFIDF_FILE = "topic_labels_tfidf.json"
 YEAR_MIN, YEAR_MAX = 1987, 2025
 MIN_SHARED_KW      = 2     # default selected value for keyword edges
 MIN_SHARED_REFS    = 3     # default selected value for coupling edges
 SIM_PRECOMPUTE_MIN = 0.92  # lower bound for pre-computing sim edges
-SIM_STEPS = [0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98]
-KW_STEPS  = [1, 2, 3]
-CP_STEPS  = [2, 3, 5, 10]
+# TF-IDF cosines are far smaller than SPECTER2's, so this mode has its own scale.
+TFIDF_PRECOMPUTE_MIN = 0.08
+TFIDF_DEFAULT_THR    = 0.12
+SIM_STEPS   = [0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98]
+TFIDF_STEPS = [0.08, 0.10, 0.12, 0.15, 0.20]
+KW_STEPS    = [1, 2, 3]
+CP_STEPS    = [2, 3, 5, 10]
 
 
 def year_to_color(year_str: str) -> str:
@@ -113,6 +119,10 @@ def load_cluster_data():
     if os.path.exists(TOPIC_LABELS_FT_FILE):
         with open(TOPIC_LABELS_FT_FILE, encoding="utf-8") as f:
             topic_labels_ft = json.load(f)
+    topic_labels_tfidf = {}
+    if os.path.exists(TOPIC_LABELS_TFIDF_FILE):
+        with open(TOPIC_LABELS_TFIDF_FILE, encoding="utf-8") as f:
+            topic_labels_tfidf = json.load(f)
 
     result = {}
     for col, label in [("cluster_embeddings",         "Clusters (embeddings)"),
@@ -123,7 +133,10 @@ def load_cluster_data():
                         ("cluster_topic",               "Topics (BERTopic)"),
                         ("cluster_embeddings_ft",        "Clusters (emb., fine-tuned)"),
                         ("cluster_louvain_embeddings_ft","Clusters (Louvain, emb. FT)"),
-                        ("cluster_topic_ft",             "Topics BERTopic (fine-tuned)")]:
+                        ("cluster_topic_ft",             "Topics BERTopic (fine-tuned)"),
+                        ("cluster_tfidf",                "Clusters (TF-IDF)"),
+                        ("cluster_louvain_tfidf",        "Clusters (Louvain, TF-IDF)"),
+                        ("cluster_topic_tfidf",          "Topics BERTopic (TF-IDF)")]:
         if col not in df.columns:
             continue
         node_clusters = {i: int(c) for i, c in enumerate(df[col])}
@@ -131,7 +144,10 @@ def load_cluster_data():
         palette       = {cid: cluster_to_color(cid) for cid in unique_ids}
         palette[-1]   = cluster_to_color(-1)
         # For topic clustering, use keyword labels in the legend
-        if col == "cluster_topic_ft" and topic_labels_ft:
+        if col == "cluster_topic_tfidf" and topic_labels_tfidf:
+            leg_labels = {str(cid): topic_labels_tfidf.get(str(cid), f"Topic {cid}") for cid in unique_ids}
+            leg_labels["-1"] = topic_labels_tfidf.get("-1", "Noise")
+        elif col == "cluster_topic_ft" and topic_labels_ft:
             leg_labels = {str(cid): topic_labels_ft.get(str(cid), f"Topic {cid}") for cid in unique_ids}
             leg_labels["-1"] = topic_labels_ft.get("-1", "Noise")
         elif col == "cluster_topic" and topic_labels:
@@ -226,6 +242,14 @@ def main():
         sim_edges_ft = build_similarity_edges(embeddings_ft, SIM_PRECOMPUTE_MIN)
     else:
         print("  specter2finetuned_embeddings.npy not found — FT edges disabled.")
+
+    tfidf_edges = []
+    if os.path.exists(TFIDF_FILE):
+        print("Loading TF-IDF embeddings…")
+        embeddings_tfidf = np.load(TFIDF_FILE).astype(np.float32)
+        tfidf_edges = build_similarity_edges(embeddings_tfidf, TFIDF_PRECOMPUTE_MIN)
+    else:
+        print("  tfidf_embeddings.npy not found — TF-IDF edges disabled.")
 
     print("Building graph…")
     net = Network(
@@ -339,14 +363,17 @@ def main():
     # Compact edge arrays for JS
     sim_edges_js    = json.dumps(sim_edges)
     sim_edges_ft_js = json.dumps(sim_edges_ft)
+    tfidf_edges_js  = json.dumps(tfidf_edges)
     kw_edges_js     = json.dumps(kw_edges)
     cp_edges_js     = json.dumps(cp_edges)
     sim_steps_js    = json.dumps(SIM_STEPS)
+    tfidf_steps_js  = json.dumps(TFIDF_STEPS)
     kw_steps_js     = json.dumps(KW_STEPS)
     cp_steps_js     = json.dumps(CP_STEPS)
     max_shared_js   = json.dumps(max_shared)
     max_coupling_js = json.dumps(max_coupling)
     has_ft_js       = json.dumps(bool(sim_edges_ft))
+    has_tfidf_js    = json.dumps(bool(tfidf_edges))
     has_cp_js       = json.dumps(bool(cp_edges))
 
     injection = f"""
@@ -549,6 +576,7 @@ def main():
       <button class="mode-btn active" id="btn-sim" onclick="switchMode('sim')">Similarity</button>
       <button class="mode-btn"        id="btn-kw"  onclick="switchMode('kw')">Keywords</button>
       <button class="mode-btn"        id="btn-cp"  onclick="switchMode('cp')" style="display:none">Coupling</button>
+      <button class="mode-btn"        id="btn-tfidf" onclick="switchMode('tfidf')" style="display:none">TF-IDF</button>
       <span id="emb-sep" style="width:1px;background:#2a2a3a;margin:6px 0;display:none"></span>
       <button class="mode-btn active" id="btn-emb-orig" onclick="switchEmb('orig')" style="display:none">Original</button>
       <button class="mode-btn"        id="btn-emb-ft"   onclick="switchEmb('ft')"   style="display:none">Fine-tuned</button>
@@ -691,20 +719,25 @@ def main():
       // Compact edge data: sim = [from, to, sim_value], kw = [from, to, shared_count]
       const SIM_EDGES    = {sim_edges_js};
       const SIM_EDGES_FT = {sim_edges_ft_js};
+      const TFIDF_EDGES  = {tfidf_edges_js};
       const KW_EDGES     = {kw_edges_js};
       const CP_EDGES     = {cp_edges_js};
       const SIM_STEPS    = {sim_steps_js};
+      const TFIDF_STEPS  = {tfidf_steps_js};
       const KW_STEPS     = {kw_steps_js};
       const CP_STEPS     = {cp_steps_js};
       const MAX_SHARED   = {max_shared_js};
       const MAX_COUPLING = {max_coupling_js};
       const SIM_MIN      = {SIM_PRECOMPUTE_MIN};
+      const TFIDF_MIN    = {TFIDF_PRECOMPUTE_MIN};
       const HAS_FT       = {has_ft_js};
+      const HAS_TFIDF    = {has_tfidf_js};
       const HAS_CP       = {has_cp_js};
 
       let currentMode   = "sim";
       let currentEmbType = "orig";   // "orig" | "ft"
       let currentSimThr = {args.threshold};
+      let currentTfidfThr = {TFIDF_DEFAULT_THR};
       let currentKwThr  = {MIN_SHARED_KW};
       let currentCpThr  = {MIN_SHARED_REFS};
 
@@ -720,6 +753,20 @@ def main():
           length: Math.max(1, Math.pow(1 - nd, 2) * 400),
           width: 4,
           color: {{color: "rgba(180,180,255,0.25)", highlight: "rgba(255,200,50,0.9)"}},
+        }};
+      }}
+
+      function makeTfidfEdge(e, i) {{
+        // Normalise within a practical TF-IDF range so stronger lexical overlap
+        // pulls papers closer; cosines above ~0.6 are treated as "very close".
+        const sim = e[2];
+        const nd  = Math.min(1, Math.max(0, (sim - TFIDF_MIN) / (0.6 - TFIDF_MIN)));
+        return {{
+          id: i, from: e[0], to: e[1],
+          length: Math.max(1, Math.pow(1 - nd, 2) * 400),
+          width: 4,
+          color: {{color: "rgba(120,220,220,0.25)", highlight: "rgba(255,200,50,0.9)"}},
+          title: "TF-IDF cosine: " + sim.toFixed(3),
         }};
       }}
 
@@ -753,6 +800,8 @@ def main():
         if (currentMode === "sim") {{
           const pool = (currentEmbType === "ft" && HAS_FT) ? SIM_EDGES_FT : SIM_EDGES;
           edges = pool.filter(e => e[2] >= currentSimThr).map(makeSimEdge);
+        }} else if (currentMode === "tfidf") {{
+          edges = TFIDF_EDGES.filter(e => e[2] >= currentTfidfThr).map(makeTfidfEdge);
         }} else if (currentMode === "cp") {{
           edges = CP_EDGES.filter(e => e[2] >= currentCpThr).map(makeCpEdge);
         }} else {{
@@ -772,16 +821,19 @@ def main():
 
       function buildThrButtons() {{
         thrButtons.innerHTML = "";
-        const steps  = currentMode === "sim" ? SIM_STEPS
-                     : currentMode === "cp"  ? CP_STEPS : KW_STEPS;
-        const active = currentMode === "sim" ? currentSimThr
-                     : currentMode === "cp"  ? currentCpThr : currentKwThr;
+        const steps  = currentMode === "sim"   ? SIM_STEPS
+                     : currentMode === "tfidf" ? TFIDF_STEPS
+                     : currentMode === "cp"    ? CP_STEPS : KW_STEPS;
+        const active = currentMode === "sim"   ? currentSimThr
+                     : currentMode === "tfidf" ? currentTfidfThr
+                     : currentMode === "cp"    ? currentCpThr : currentKwThr;
         steps.forEach(val => {{
           const btn = document.createElement("button");
           btn.className = "thr-btn" + (val === active ? " active" : "");
-          btn.textContent = currentMode === "sim" ? val.toFixed(2) : val;
+          btn.textContent = (currentMode === "sim" || currentMode === "tfidf") ? val.toFixed(2) : val;
           btn.onclick = () => {{
             if (currentMode === "sim") currentSimThr = val;
+            else if (currentMode === "tfidf") currentTfidfThr = val;
             else if (currentMode === "cp") currentCpThr = val;
             else currentKwThr = val;
             buildThrButtons();
@@ -789,8 +841,9 @@ def main():
           }};
           thrButtons.appendChild(btn);
         }});
-        thrLabel.textContent = currentMode === "sim" ? "Similarity threshold"
-                             : currentMode === "cp"  ? "Min shared references"
+        thrLabel.textContent = currentMode === "sim"   ? "Similarity threshold"
+                             : currentMode === "tfidf" ? "TF-IDF cosine threshold"
+                             : currentMode === "cp"    ? "Min shared references"
                              : "Min shared keywords";
         edgeCountEl.textContent = "";
       }}
@@ -816,6 +869,7 @@ def main():
         document.getElementById("btn-sim").classList.toggle("active", mode === "sim");
         document.getElementById("btn-kw").classList.toggle("active", mode === "kw");
         document.getElementById("btn-cp").classList.toggle("active", mode === "cp");
+        document.getElementById("btn-tfidf").classList.toggle("active", mode === "tfidf");
         updateEmbToggleVisibility();
         buildThrButtons();
         applyEdges();
@@ -823,6 +877,8 @@ def main():
 
       // Show the coupling-mode button only if coupling data is present
       if (HAS_CP) document.getElementById("btn-cp").style.display = "";
+      // Show the TF-IDF-mode button only if TF-IDF embeddings are present
+      if (HAS_TFIDF) document.getElementById("btn-tfidf").style.display = "";
 
       // Show emb toggle on load if FT embeddings present
       updateEmbToggleVisibility();

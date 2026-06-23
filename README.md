@@ -38,6 +38,9 @@ ArtCon_with abstracts.docx          ArtCon_from_zotero.csv
         ├──► embed_specter2.py ───────────────► specter2_embeddings.npy
         │                                       specter2_index.csv
         │
+        ├──► embed_tfidf.py ──────────────────► tfidf_embeddings.npy
+        │                                       tfidf_index.csv
+        │
         ├──► extract_keywords.py ────────────► ArtCon_keywords.csv
         │
         ├──► classify_theses.py ─────────────► ArtCon_theses.csv
@@ -119,6 +122,27 @@ uv run python3 embed_specter2.py
 
 ---
 
+### 3b. `embed_tfidf.py` — Generate TF-IDF (lexical) embeddings
+
+Lexical counterpart to `embed_specter2.py`: builds L2-normalised TF-IDF vectors
+over the same `title + abstract` text (unigrams + bigrams, English stop-words,
+`min_df=2`, `max_features=20000`). CPU-only and fast. Row order matches
+`specter2_index.csv`, so the output is a drop-in third graph type alongside the
+original and fine-tuned SPECTER2 graphs in clustering, the comparison table, and
+the interactive viewer.
+
+```bash
+uv run python3 embed_tfidf.py
+```
+
+**Output:** `tfidf_embeddings.npy` (N × vocab float32), `tfidf_index.csv`
+
+> **Note:** TF-IDF cosine similarities are far smaller than SPECTER2's
+> (~0.02 median vs. ~0.91), so the TF-IDF graph uses much lower edge thresholds
+> throughout (clustering/Louvain default `0.10`; viewer steps `0.08–0.20`).
+
+---
+
 ### 4. `extract_keywords.py` — Extract keyphrases
 
 Extracts keyphrases from abstracts using
@@ -176,15 +200,21 @@ uv run python3 cluster_papers.py --method keywords
 uv run python3 cluster_papers.py --method stance
 uv run python3 cluster_papers.py --method louvain_embeddings
 uv run python3 cluster_papers.py --method louvain_keywords
+uv run python3 cluster_papers.py --method tfidf
+uv run python3 cluster_papers.py --method louvain_tfidf
 ```
 
 | Method | Features | Algorithm |
 |--------|----------|-----------|
 | `embeddings` | SPECTER2 embeddings | UMAP → HDBSCAN |
 | `keywords` | TF-IDF on keyphrases | UMAP → HDBSCAN |
+| `tfidf` | TF-IDF on title + abstract | UMAP → HDBSCAN |
 | `stance` | Thesis stance vectors (5-dim) | HDBSCAN directly |
 | `louvain_embeddings` | Cosine similarity graph | Louvain community detection |
 | `louvain_keywords` | Keyword co-occurrence graph | Louvain community detection |
+| `louvain_tfidf` | TF-IDF cosine graph (thr ≥ 0.10) | Louvain community detection |
+
+(`embeddings_ft` / `louvain_embeddings_ft` variants use the fine-tuned embeddings.)
 
 **Output:** `ArtCon_clusters.csv` — adds one `cluster_<method>` column per method
 
@@ -335,6 +365,8 @@ uv run python3 export_gephi.py
 | `ArtCon_coupling.npz` | Bibliographic coupling sparse matrix |
 | `specter2_embeddings.npy` | SPECTER2 embeddings (696 × 768) |
 | `specter2_index.csv` | Row index → paper metadata mapping |
+| `tfidf_embeddings.npy` | TF-IDF lexical embeddings (N × vocab) |
+| `tfidf_index.csv` | Row index → paper metadata mapping (TF-IDF) |
 | `topic_labels.json` | BERTopic topic labels |
 | `openalex_api_key.txt` | OpenAlex API key *(not committed)* |
 
