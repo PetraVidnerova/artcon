@@ -25,13 +25,16 @@ INDEX_FILE         = "specter2_index.csv"
 THESES_FILE     = "ArtCon_theses.csv"
 KEYWORDS_FILE   = "ArtCon_keywords.csv"
 CLUSTERS_FILE   = "ArtCon_clusters.csv"
+COUPLING_FILE   = "ArtCon_coupling.npz"
 TOPIC_LABELS_FILE    = "topic_labels.json"
 TOPIC_LABELS_FT_FILE = "topic_labels_ft.json"
 YEAR_MIN, YEAR_MAX = 1987, 2025
 MIN_SHARED_KW      = 2     # default selected value for keyword edges
+MIN_SHARED_REFS    = 3     # default selected value for coupling edges
 SIM_PRECOMPUTE_MIN = 0.92  # lower bound for pre-computing sim edges
 SIM_STEPS = [0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98]
 KW_STEPS  = [1, 2, 3]
+CP_STEPS  = [2, 3, 5, 10]
 
 
 def year_to_color(year_str: str) -> str:
@@ -180,6 +183,24 @@ def build_keyword_edges(n_nodes):
     return edges, max_shared
 
 
+def build_coupling_edges():
+    """Return compact list of [from, to, shared_refs] from the precomputed
+    bibliographic-coupling matrix, plus the maximum coupling score.
+    Edge visual properties are computed client-side to keep the file small."""
+    print("Loading bibliographic coupling edges…")
+    if not os.path.exists(COUPLING_FILE):
+        print("  No coupling file found — skipping.")
+        return [], 0
+    import scipy.sparse as sp
+    mat = sp.load_npz(COUPLING_FILE).tocoo()
+    # Matrix is symmetric; keep the upper triangle only.
+    edges = [[int(i), int(j), int(s)]
+             for i, j, s in zip(mat.row, mat.col, mat.data) if i < j]
+    max_coupling = max((e[2] for e in edges), default=1)
+    print(f"  {len(edges)} coupling edges (min shared refs=1), max shared={max_coupling}")
+    return edges, max_coupling
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--threshold", type=float, default=0.96,
@@ -196,6 +217,7 @@ def main():
 
     sim_edges            = build_similarity_edges(embeddings, SIM_PRECOMPUTE_MIN)
     kw_edges, max_shared = build_keyword_edges(len(index))
+    cp_edges, max_coupling = build_coupling_edges()
 
     sim_edges_ft = []
     if os.path.exists(EMBEDDINGS_FT_FILE):
@@ -259,7 +281,8 @@ def main():
         net.add_edge(e[0], e[1], length=length, width=4,
                      color={"color": "rgba(180,180,255,0.25)", "highlight": "rgba(255,200,50,0.9)"})
 
-    print(f"Graph: {len(index)} nodes, {len(sim_edges)} sim edges, {len(kw_edges)} keyword edges")
+    print(f"Graph: {len(index)} nodes, {len(sim_edges)} sim edges, "
+          f"{len(kw_edges)} keyword edges, {len(cp_edges)} coupling edges")
 
     html = net.generate_html()
 
@@ -317,10 +340,14 @@ def main():
     sim_edges_js    = json.dumps(sim_edges)
     sim_edges_ft_js = json.dumps(sim_edges_ft)
     kw_edges_js     = json.dumps(kw_edges)
+    cp_edges_js     = json.dumps(cp_edges)
     sim_steps_js    = json.dumps(SIM_STEPS)
     kw_steps_js     = json.dumps(KW_STEPS)
+    cp_steps_js     = json.dumps(CP_STEPS)
     max_shared_js   = json.dumps(max_shared)
+    max_coupling_js = json.dumps(max_coupling)
     has_ft_js       = json.dumps(bool(sim_edges_ft))
+    has_cp_js       = json.dumps(bool(cp_edges))
 
     injection = f"""
     <style>
@@ -521,6 +548,7 @@ def main():
     <div id="mode-toggle">
       <button class="mode-btn active" id="btn-sim" onclick="switchMode('sim')">Similarity</button>
       <button class="mode-btn"        id="btn-kw"  onclick="switchMode('kw')">Keywords</button>
+      <button class="mode-btn"        id="btn-cp"  onclick="switchMode('cp')" style="display:none">Coupling</button>
       <span id="emb-sep" style="width:1px;background:#2a2a3a;margin:6px 0;display:none"></span>
       <button class="mode-btn active" id="btn-emb-orig" onclick="switchEmb('orig')" style="display:none">Original</button>
       <button class="mode-btn"        id="btn-emb-ft"   onclick="switchEmb('ft')"   style="display:none">Fine-tuned</button>
@@ -664,16 +692,21 @@ def main():
       const SIM_EDGES    = {sim_edges_js};
       const SIM_EDGES_FT = {sim_edges_ft_js};
       const KW_EDGES     = {kw_edges_js};
+      const CP_EDGES     = {cp_edges_js};
       const SIM_STEPS    = {sim_steps_js};
       const KW_STEPS     = {kw_steps_js};
+      const CP_STEPS     = {cp_steps_js};
       const MAX_SHARED   = {max_shared_js};
+      const MAX_COUPLING = {max_coupling_js};
       const SIM_MIN      = {SIM_PRECOMPUTE_MIN};
       const HAS_FT       = {has_ft_js};
+      const HAS_CP       = {has_cp_js};
 
       let currentMode   = "sim";
       let currentEmbType = "orig";   // "orig" | "ft"
       let currentSimThr = {args.threshold};
       let currentKwThr  = {MIN_SHARED_KW};
+      let currentCpThr  = {MIN_SHARED_REFS};
 
       const thrButtons  = document.getElementById("thr-buttons");
       const thrLabel    = document.getElementById("threshold-label");
@@ -702,12 +735,26 @@ def main():
         }};
       }}
 
+      function makeCpEdge(e, i) {{
+        const w  = e[2];
+        const nd = 1 - w / MAX_COUPLING;
+        return {{
+          id: i, from: e[0], to: e[1],
+          length: Math.max(1, nd * nd * 400),
+          width: Math.max(1, Math.round(4 * w / MAX_COUPLING + 1)),
+          color: {{color: "rgba(255,200,150,0.25)", highlight: "rgba(255,200,50,0.9)"}},
+          title: "shared references: " + w,
+        }};
+      }}
+
       function applyEdges() {{
         if (!window.visEdges || !window.visNetwork) return;
         let edges;
         if (currentMode === "sim") {{
           const pool = (currentEmbType === "ft" && HAS_FT) ? SIM_EDGES_FT : SIM_EDGES;
           edges = pool.filter(e => e[2] >= currentSimThr).map(makeSimEdge);
+        }} else if (currentMode === "cp") {{
+          edges = CP_EDGES.filter(e => e[2] >= currentCpThr).map(makeCpEdge);
         }} else {{
           edges = KW_EDGES.filter(e => e[2] >= currentKwThr).map(makeKwEdge);
         }}
@@ -725,21 +772,26 @@ def main():
 
       function buildThrButtons() {{
         thrButtons.innerHTML = "";
-        const steps  = currentMode === "sim" ? SIM_STEPS : KW_STEPS;
-        const active = currentMode === "sim" ? currentSimThr : currentKwThr;
+        const steps  = currentMode === "sim" ? SIM_STEPS
+                     : currentMode === "cp"  ? CP_STEPS : KW_STEPS;
+        const active = currentMode === "sim" ? currentSimThr
+                     : currentMode === "cp"  ? currentCpThr : currentKwThr;
         steps.forEach(val => {{
           const btn = document.createElement("button");
           btn.className = "thr-btn" + (val === active ? " active" : "");
           btn.textContent = currentMode === "sim" ? val.toFixed(2) : val;
           btn.onclick = () => {{
             if (currentMode === "sim") currentSimThr = val;
+            else if (currentMode === "cp") currentCpThr = val;
             else currentKwThr = val;
             buildThrButtons();
             applyEdges();
           }};
           thrButtons.appendChild(btn);
         }});
-        thrLabel.textContent = currentMode === "sim" ? "Similarity threshold" : "Min shared keywords";
+        thrLabel.textContent = currentMode === "sim" ? "Similarity threshold"
+                             : currentMode === "cp"  ? "Min shared references"
+                             : "Min shared keywords";
         edgeCountEl.textContent = "";
       }}
 
@@ -763,10 +815,14 @@ def main():
         currentMode = mode;
         document.getElementById("btn-sim").classList.toggle("active", mode === "sim");
         document.getElementById("btn-kw").classList.toggle("active", mode === "kw");
+        document.getElementById("btn-cp").classList.toggle("active", mode === "cp");
         updateEmbToggleVisibility();
         buildThrButtons();
         applyEdges();
       }}
+
+      // Show the coupling-mode button only if coupling data is present
+      if (HAS_CP) document.getElementById("btn-cp").style.display = "";
 
       // Show emb toggle on load if FT embeddings present
       updateEmbToggleVisibility();

@@ -59,13 +59,14 @@ def plot_curve(thresholds, y_orig, y_ft, ylabel, title, out_path, ylim=None):
     fig, ax = plt.subplots(figsize=(8, 5))
     ax.plot(thresholds, y_orig, "-o", label="original",   color="#1f77b4", markersize=4, linewidth=2)
     ax.plot(thresholds, y_ft,   "-o", label="fine-tuned", color="#d62728", markersize=4, linewidth=2)
-    ax.set_xlabel("cosine-similarity threshold")
-    ax.set_ylabel(ylabel)
-    ax.set_title(title)
+    ax.set_xlabel("cosine-similarity threshold", fontsize=16)
+    ax.set_ylabel(ylabel, fontsize=16)
+    ax.set_title(title, fontsize=16)
+    ax.tick_params(axis="both", labelsize=14)
     if ylim is not None:
         ax.set_ylim(*ylim)
     ax.grid(True, alpha=0.3)
-    ax.legend()
+    ax.legend(fontsize=14)
     fig.tight_layout()
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
@@ -99,7 +100,7 @@ def main():
 
     plot_curve(thresholds, mod_o, mod_f,
                "Louvain modularity (weighted)",
-               f"Modularity vs. threshold  (n = {n} papers, resolution = {args.resolution})",
+               f"Modularity vs. threshold  (n = {n} papers)",
                args.mod_out)
 
     import pandas as pd
